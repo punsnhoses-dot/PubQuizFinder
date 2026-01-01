@@ -1,0 +1,28 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Leaflet Smoke Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Leaflet CSS (no SRI) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; }
+  </style>
+  data:,
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Leaflet JS (no SRI) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/distscript>
+  <script>
+    const map = L.map('map').setView([53.8, -2.2], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+  </script>
+</body>
+</html>
