@@ -1,0 +1,275 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Pub Quiz Map — SpeedQuizzing Events</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Leaflet CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhI+VEbI1Cw8gXuvnqj0LC2LqF2R0cWt0v7M="
+     --text: #e5e7eb;    /* gray-200 */
+      --accent: #22c55e;  /* green-500 */
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      color: var(--text);
+      background: var(--bg);
+      display: grid;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+    }
+    header {
+      padding: 0.75rem 1rem;
+      background: var(--panel);
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      gap: 0.75rem;
+      align-items: center;
+      border-bottom: 1px solid #1f2937;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+    }
+    select, button, input[type="date"] {
+      background: #0b1220;
+      border: 1px solid #334155;
+      color: var(--text);
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.95rem;
+    }
+    button {
+      cursor: pointer;
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+    .leaflet-popup-content {
+      color: #111827;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.4rem;
+      border-radius: 6px;
+      background: #e2e8f0;
+      color: #1f2937;
+      font-size: 0.75rem;
+      margin-right: 0.35rem;
+    }
+    .footer {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      background: rgba(17,24,39,0.85);
+      color: #9ca3af;
+      padding: 0.35rem 0.55rem;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Pub Quiz Map — SpeedQuizzing Events</h1>
+
+    <!-- Day filter -->
+    <label>
+      Day:
+      <select id="dayFilter">
+        <option value="All">All</option>
+        <option>Monday</option><option>Tuesday</option><option>Wednesday</option>
+        <option>Thursday</option><option>Friday</option><option>Saturday</option><option>Sunday</option>
+      </select>
+    </label>
+
+    <!-- Format filter -->
+    <label>
+      Format:
+      <select id="formatFilter">
+        <option value="All">All</option>
+        <option>Phone or tablet</option>
+        <option>Pen and paper</option>
+        <option>Unknown</option>
+      </select>
+    </label>
+
+    <!-- Optional "Today" shortcut -->
+    <button id="todayBtn" title="Filter by today's day">Today</button>
+  </header>
+
+  <div id="map"></div>
+  <div class="footer">Tiles © OpenStreetMap contributors • Geocoding via Nominatim</div>
+
+  <!-- Leaflet JS -->
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCmZ8Z9ka3QnY6YI1aQ1Ck0WwKjvG8v+PMwXW4vldCopyJump: true }).setView([53.8, -2.2], 6); // UK-ish center
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    const markersLayer = L.layerGroup().addTo(map);
+
+    // ---- Local cache for geocodes ----
+    const GEO_CACHE_KEY = "sq_geo_cache_v1";
+    const geoCache = JSON.parse(localStorage.getItem(GEO_CACHE_KEY) || "{}");
+    function saveGeoCache() {
+      localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(geoCache));
+    }
+
+    // ---- Utility: debounce ----
+    function debounce(fn, delay = 350) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), delay);
+      };
+    }
+
+    // ---- Geocode using Nominatim (simple, rate-limited) ----
+    async function geocode(venue, address, postcode) {
+      const key = `${venue}|${address}|${postcode}`.toLowerCase();
+      if (geoCache[key]) return geoCache[key];
+
+      // Build query: prefer postcode when available
+      const queryParts = [venue, address, postcode].filter(Boolean);
+      const q = encodeURIComponent(queryParts.join(", "));
+
+      // Respectful simple rate-limit: 1 req / 1s in this demo
+      await new Promise(r => setTimeout(r, 1000));
+
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${q}`;
+      const resp = await fetch(url, { headers: { "Accept-Language": "en" } });
+      const data = await resp.json();
+
+      if (Array.isArray(data) && data.length) {
+        const { lat, lon, display_name } = data[0];
+        const result = { lat: parseFloat(lat), lon: parseFloat(lon), display_name };
+        geoCache[key] = result;
+        saveGeoCache();
+        return result;
+      }
+      // if failed, return null to skip marker
+      return null;
+    }
+
+    // ---- Load events ----
+    let EVENTS = [];
+    async function loadEvents() {
+      const resp = await fetch('events.json');
+      EVENTS = await resp.json();
+
+      // Build filter option lists dynamically (esp. formats)
+      const formats = new Set(["All"]);
+      EVENTS.forEach(e => formats.add(e.format || "Unknown"));
+      const formatSelect = document.getElementById('formatFilter');
+      formatSelect.innerHTML = [...formats].map(f => `<option>${f}</option>`).join("");
+
+      renderMarkers(); // initial plot
+    }
+
+    // ---- Filters ----
+    const dayFilterEl = document.getElementById('dayFilter');
+    const formatFilterEl = document.getElementById('formatFilter');
+    const todayBtn = document.getElementById('todayBtn');
+
+    function getTodayName() {
+      const d = new Date();
+      return d.toLocaleDateString(undefined, { weekday: 'long' }); // e.g., 'Monday'
+    }
+
+    todayBtn.addEventListener('click', () => {
+      dayFilterEl.value = getTodayName();
+      renderMarkers();
+    });
+
+    dayFilterEl.addEventListener('change', debounce(renderMarkers, 100));
+    formatFilterEl.addEventListener('change', debounce(renderMarkers, 100));
+
+    function passesFilters(e) {
+      const dayVal = dayFilterEl.value;
+      const fmtVal = formatFilterEl.value;
+
+      const dayOk = (dayVal === 'All') || (e.day && e.day === dayVal);
+      const fmt = (e.format && e.format.trim()) ? e.format.trim() : 'Unknown';
+      const formatOk = (fmtVal === 'All') || (fmt === fmtVal);
+
+      return dayOk && formatOk;
+    }
+
+    // ---- Render markers ----
+    async function renderMarkers() {
+      markersLayer.clearLayers();
+
+      // Collect coordinates for filtered events
+      const filtered = EVENTS.filter(passesFilters);
+
+      // Geocode in small batches to avoid hammering Nominatim
+      const batchSize = 5;
+      for (let i = 0; i < filtered.length; i += batchSize) {
+        const batch = filtered.slice(i, i + batchSize);
+        const results = await Promise.all(batch.map(e =>
+          geocode(e.venue_name, e.address, e.postcode)
+            .then(loc => ({ e, loc }))
+            .catch(() => ({ e, loc: null }))
+        ));
+
+        results.forEach(({ e, loc }) => {
+          if (!loc) return;
+
+          const m = L.marker([loc.lat, loc.lon]);
+          const popupHtml = `
+            <div>
+              <strong>${escapeHtml(e.event_title || 'SpeedQuizzing Event')}</strong>
+              <div>${escapeHtml(e.venue_name || '')}</div>
+              <div>${escapeHtml((e.address || '') + (e.postcode ? ', ' + e.postcode : ''))}</div>
+              <div style="margin-top:6px;">
+                <span class="badge">${escapeHtml(e.day || 'Unknown')}</span>
+                <span class="badge">${escapeHtml(e.time || '')}</span>
+                <span class="badge">${escapeHtml(e.format || 'Unknown')}</span>
+              </div>
+              ${e.event_url ? `<div style="margin-top:6px;"><a target="_blank" rel="noopenerpage</a></div>` : ''}
+              ${e.entry_fee ? `<div><em>Entry:</em> ${escapeHtml(e.entry_fee)}</div>` : ''}
+              ${e.prizes ? `<div><em>Prizes:</em> ${escapeHtml(e.prizes)}</div>` : ''}
+            </div>
+          `;
+          m.bindPopup(popupHtml);
+          m.addTo(markersLayer);
+        });
+      }
+
+      // Fit map to markers if any
+      const groupBounds = markersLayer.getLayers().length
+        ? markersLayer.getBounds()
+        : null;
+      if (groupBounds && groupBounds.isValid()) {
+        map.fitBounds(groupBounds.pad(0.2));
+      }
+    }
+
+    // ---- Safe HTML helpers ----
+    function escapeHtml(s) {
+      if (s == null) return '';
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+    function escapeAttr(s) {
+      return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // ---- Start ----
+    loadEvents();
+  </script>
+</body>
+</html>
